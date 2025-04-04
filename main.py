@@ -1,11 +1,11 @@
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler, CallbackQueryHandler
 
-# Bot token (yours)
-BOT_TOKEN = '7997442253:AAEozKA-hj2rsTTub56Kv_8AmUCSC5WT7oQ'
+import os
 
-# Your Telegram user ID (admin)
-ADMIN_ID = 2136370655
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+ADMIN_ID = int(os.getenv("ADMIN_ID"))
+
 
 # States
 WAIT_JOIN, CHOOSE_CATEGORY, TYPING_REQUEST = range(3)
