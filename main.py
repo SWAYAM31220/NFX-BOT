@@ -1,64 +1,41 @@
-from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler, CallbackQueryHandler
-
 import os
+from telegram import Update, ReplyKeyboardMarkup
+from telegram.ext import (
+    ApplicationBuilder, CommandHandler, MessageHandler, filters,
+    ConversationHandler, ContextTypes
+)
+from quart import Quart, request
 
+# Environment variables
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
-
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # Your Render public URL
 
 # States
-WAIT_JOIN, CHOOSE_CATEGORY, TYPING_REQUEST = range(3)
-
-# Replace with your real channel links
-CHANNEL_LINKS = {
-    "Movies Channel": "https://t.me/+m4n8-lusbrs4M2E1",
-    "Modded APKs Channel": "https://t.me/yourapkchannel",
-    "Courses Channel": "https://t.me/yourcourseschannel"
-}
-
-# Temporarily store user category selection
+CHOOSE_CATEGORY, TYPING_REQUEST = range(2)
 user_category = {}
 
-# /start command: send welcome + ask to join channels
+# Initialize app and bot
+app = Quart(__name__)
+telegram_app = ApplicationBuilder().token(BOT_TOKEN).build()
+
+# Bot Handlers
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    buttons = [
-        [InlineKeyboardButton(name, url=url)] for name, url in CHANNEL_LINKS.items()
-    ]
-    buttons.append([InlineKeyboardButton("I've Joined All Channels", callback_data="joined")])
-    reply_markup = InlineKeyboardMarkup(buttons)
-
-    welcome_msg = (
-        "Hey there! Welcome to the Request Bot.\n\n"
-        "To use this bot, please join all our channels first:"
-    )
-    await update.message.reply_text(welcome_msg, reply_markup=reply_markup)
-    return WAIT_JOIN
-
-# Callback after user clicks "I've Joined"
-async def joined_channels(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
     keyboard = [['Movies', 'Modded APKs', 'Courses']]
     reply_markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
-
-    await query.edit_message_text("Thanks for joining! What do you need help with?")
-    await query.message.reply_text("Choose a category:", reply_markup=reply_markup)
+    await update.message.reply_text("Welcome! Please choose a category to request:", reply_markup=reply_markup)
     return CHOOSE_CATEGORY
 
-# Handle category selection
 async def category_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     category = update.message.text
     user_category[update.message.from_user.id] = category
-    await update.message.reply_text(f"Great! Please type your request for {category}.")
+    await update.message.reply_text(f"Type your request for {category}.")
     return TYPING_REQUEST
 
-# Handle request input
 async def receive_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message.from_user
-    request_text = update.message.text
     category = user_category.get(user.id, "Unknown")
+    request_text = update.message.text
 
     message = (
         f"New Request:\n"
@@ -68,35 +45,39 @@ async def receive_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     await context.bot.send_message(chat_id=ADMIN_ID, text=message)
-    await update.message.reply_text("Your request has been sent. Thank you!")
-
-    # Restart selection
     keyboard = [['Movies', 'Modded APKs', 'Courses']]
     reply_markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
-    await update.message.reply_text("Want to request something else? Choose a category:", reply_markup=reply_markup)
+    await update.message.reply_text("Request sent! Want to make another one?", reply_markup=reply_markup)
     return CHOOSE_CATEGORY
 
-# Cancel command
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Request cancelled.")
+    await update.message.reply_text("Cancelled.")
     return ConversationHandler.END
 
-# Main app function
-def main():
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+# Conversation handler
+conv_handler = ConversationHandler(
+    entry_points=[CommandHandler("start", start)],
+    states={
+        CHOOSE_CATEGORY: [MessageHandler(filters.TEXT & ~filters.COMMAND, category_chosen)],
+        TYPING_REQUEST: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_request)],
+    },
+    fallbacks=[CommandHandler("cancel", cancel)],
+)
 
-    conv_handler = ConversationHandler(
-        entry_points=[CommandHandler('start', start)],
-        states={
-            WAIT_JOIN: [CallbackQueryHandler(joined_channels, pattern='^joined$')],
-            CHOOSE_CATEGORY: [MessageHandler(filters.TEXT & ~filters.COMMAND, category_chosen)],
-            TYPING_REQUEST: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_request)],
-        },
-        fallbacks=[CommandHandler('cancel', cancel)],
-    )
+telegram_app.add_handler(conv_handler)
 
-    app.add_handler(conv_handler)
-    app.run_polling()
+# Quart webhook endpoint
+@app.post("/webhook")
+async def webhook():
+    update = Update.de_json(await request.json, telegram_app.bot)
+    await telegram_app.process_update(update)
+    return "OK"
 
-if __name__ == '__main__':
-    main()
+# Set webhook on startup
+@app.before_serving
+async def init():
+    await telegram_app.bot.set_webhook(url=f"{WEBHOOK_URL}/webhook")
+
+# Run the app
+if __name__ == "__main__":
+    app.run(port=10000)
